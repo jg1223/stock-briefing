@@ -61,7 +61,7 @@ def get_prices():
 def google_news(query: str, n=3):
     enc = urllib.parse.quote(query)
     url = (f"https://news.google.com/rss/search"
-           f"?q={enc}&hl=en-US&gl=US&ceid=US:en")
+           f"?q={enc}&hl=ko&gl=KR&ceid=KR:ko")
     try:
         feed = feedparser.parse(url)
         cutoff = NOW - timedelta(days=2)
@@ -106,9 +106,9 @@ def naver_news(query: str, n=3):
 
 # ── 4. 뉴스 수집 ─────────────────────────────────────────────
 NEWS_QUERIES = {
-    "DIS":  ("Disney DIS stock",    "디즈니 주식"),
-    "AAPL": ("Apple AAPL stock",    "애플 주식"),
-    "MSFT": ("Microsoft MSFT stock","마이크로소프트 주식"),
+    "DIS":  ("디즈니 주식",          "디즈니 주식"),
+    "AAPL": ("애플 주식",            "애플 주식"),
+    "MSFT": ("마이크로소프트 주식",   "마이크로소프트 주식"),
 }
 
 def collect_news():
