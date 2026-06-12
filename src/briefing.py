@@ -52,10 +52,12 @@ def _make_result(sym, name, prev, curr):
 
 def _fetch_naver(sym):
     """네이버 금융(모바일) 해외증시 API 에서 현재가/전일종가 가져오기 (1차 시도)"""
-    url = f"https://m.stock.naver.com/api/stock/{sym}.O/basic"
+    # .O 접미사 없이 시도
+    url = f"https://m.stock.naver.com/api/stock/{sym}/basic"
     req = urllib.request.Request(url, headers={
         "User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36",
         "Accept": "application/json",
+        "Referer": "https://m.stock.naver.com/",
     })
     with urllib.request.urlopen(req, timeout=10) as r:
         raw_text = r.read().decode("utf-8")
@@ -78,6 +80,32 @@ def _fetch_naver(sym):
     if curr is None or prev is None:
         raise ValueError(f"필드 누락. keys={list(data.keys())[:15]}")
 
+    return prev, curr
+
+
+def _fetch_yahoo_chart(sym):
+    """Yahoo Finance Chart API 직접 호출 (yfinance 라이브러리 우회)"""
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=5d&interval=1d"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+    })
+    with urllib.request.urlopen(req, timeout=10) as r:
+        data = json.loads(r.read().decode("utf-8"))
+
+    result = data.get("chart", {}).get("result")
+    if not result:
+        err = data.get("chart", {}).get("error")
+        raise ValueError(f"Yahoo Chart 응답 오류: {err}")
+
+    closes = result[0]["indicators"]["quote"][0]["close"]
+    closes = [c for c in closes if c is not None]
+    if len(closes) < 2:
+        raise ValueError("Yahoo Chart 데이터 부족")
+
+    prev = float(closes[-2])
+    curr = float(closes[-1])
     return prev, curr
 
 
@@ -138,7 +166,19 @@ def get_prices():
                     if attempt == 0:
                         time.sleep(2)
 
-        # 3차: yfinance 최종 백업 (최대 2회)
+        # 3차: Yahoo Finance Chart API 직접 호출
+        if result is None:
+            for attempt in range(2):
+                try:
+                    prev, curr = _fetch_yahoo_chart(sym)
+                    result = _make_result(sym, name, prev, curr)
+                    break
+                except Exception as e:
+                    print(f"[YahooChart 오류] {sym} (시도 {attempt+1}/2): {e}")
+                    if attempt == 0:
+                        time.sleep(3)
+
+        # 4차: yfinance 최종 백업 (최대 2회)
         if result is None:
             for attempt in range(2):
                 try:
