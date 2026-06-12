@@ -58,50 +58,74 @@ def get_prices():
 
 
 # ── 2. Google News RSS ────────────────────────────────────────
-def google_news(query: str, n=3):
+def google_news(query: str, n_today=5, n_yesterday=5):
+    """오늘 뉴스 n_today개 + 어제 뉴스 n_yesterday개 반환"""
     enc = urllib.parse.quote(query)
     url = (f"https://news.google.com/rss/search"
            f"?q={enc}&hl=ko&gl=KR&ceid=KR:ko")
+    today_date     = NOW.date()
+    yesterday_date = (NOW - timedelta(days=1)).date()
+
+    today_items, yesterday_items = [], []
     try:
         feed = feedparser.parse(url)
-        cutoff = NOW - timedelta(days=2)
-        items = []
         for e in feed.entries:
             pub = datetime(*e.published_parsed[:6], tzinfo=timezone.utc).astimezone(KST)
-            if pub < cutoff:
-                continue
-            items.append({"title": e.title, "link": e.link,
-                          "pub": pub.strftime("%m/%d %H:%M")})
-            if len(items) >= n:
+            item = {"title": e.title, "link": e.link,
+                    "pub": pub.strftime("%m/%d %H:%M")}
+            if pub.date() == today_date and len(today_items) < n_today:
+                today_items.append(item)
+            elif pub.date() == yesterday_date and len(yesterday_items) < n_yesterday:
+                yesterday_items.append(item)
+
+            if len(today_items) >= n_today and len(yesterday_items) >= n_yesterday:
                 break
-        return items
+        return today_items + yesterday_items
     except Exception as ex:
         print(f"[Google RSS 오류] {query}: {ex}")
-        return []
+        return today_items + yesterday_items
 
 
 # ── 3. Naver News API ─────────────────────────────────────────
-def naver_news(query: str, n=3):
+def naver_news(query: str, n_today=5, n_yesterday=5):
+    """오늘 뉴스 n_today개 + 어제 뉴스 n_yesterday개 반환"""
     if not NAVER_ID or not NAVER_SECRET:
         return []
     enc = urllib.parse.quote(query)
+    # 여유있게 더 많이 받아와서 날짜별로 분류 (display 최대 100)
+    display = max(n_today, n_yesterday) * 6
     url = (f"https://openapi.naver.com/v1/search/news.json"
-           f"?query={enc}&display={n}&sort=date")
+           f"?query={enc}&display={display}&sort=date")
     req = urllib.request.Request(url)
     req.add_header("X-Naver-Client-Id", NAVER_ID)
     req.add_header("X-Naver-Client-Secret", NAVER_SECRET)
+
+    today_date     = NOW.date()
+    yesterday_date = (NOW - timedelta(days=1)).date()
+    today_items, yesterday_items = [], []
+
     try:
         with urllib.request.urlopen(req) as r:
             raw = json.loads(r.read().decode())
-        return [
-            {"title": it["title"].replace("<b>","").replace("</b>",""),
-             "link":  it.get("originallink") or it["link"],
-             "pub":   it.get("pubDate","")[:16]}
-            for it in raw.get("items", [])
-        ]
+        for it in raw.get("items", []):
+            try:
+                pub_dt = datetime.strptime(it.get("pubDate",""), "%a, %d %b %Y %H:%M:%S %z").astimezone(KST)
+            except Exception:
+                continue
+            item = {"title": it["title"].replace("<b>","").replace("</b>",""),
+                    "link":  it.get("originallink") or it["link"],
+                    "pub":   pub_dt.strftime("%m/%d %H:%M")}
+            if pub_dt.date() == today_date and len(today_items) < n_today:
+                today_items.append(item)
+            elif pub_dt.date() == yesterday_date and len(yesterday_items) < n_yesterday:
+                yesterday_items.append(item)
+
+            if len(today_items) >= n_today and len(yesterday_items) >= n_yesterday:
+                break
+        return today_items + yesterday_items
     except Exception as ex:
         print(f"[Naver 오류] {query}: {ex}")
-        return []
+        return today_items + yesterday_items
 
 
 # ── 4. 뉴스 수집 ─────────────────────────────────────────────
@@ -134,23 +158,45 @@ def build_html(prices, g_news, n_news):
           <td style="padding:10px 14px;text-align:center;color:{s['color_hex']};font-weight:700">{s['arrow']} {s['sign']}{s['chg']}%</td>
         </tr>"""
 
-    # 뉴스 블록
+    # 뉴스 블록 (오늘/어제 섹션 구분, 각 최대 5개)
     news_blocks = ""
     accent = {"DIS":"#0277bd","AAPL":"#c62828","MSFT":"#2e7d32"}
+
+    def render_news_list(items):
+        return "".join(
+            f'<li style="margin:4px 0"><a href="{x["link"]}" style="color:#1565c0;text-decoration:none">{x["title"]}</a> '
+            f'<span style="color:#aaa;font-size:11px">{x["pub"]}</span></li>'
+            for x in items
+        ) or "<li style='color:#aaa'>뉴스 없음</li>"
+
     for s in prices:
         sym  = s['symbol']
         col  = accent.get(sym, "#555")
         gn   = g_news.get(sym, [])
         nn   = n_news.get(sym, [])
-        g_li = "".join(f'<li style="margin:4px 0"><a href="{x["link"]}" style="color:#1565c0;text-decoration:none">{x["title"]}</a> <span style="color:#aaa;font-size:11px">{x["pub"]}</span></li>' for x in gn) or "<li style='color:#aaa'>뉴스 없음</li>"
-        n_li = "".join(f'<li style="margin:4px 0"><a href="{x["link"]}" style="color:#1565c0;text-decoration:none">{x["title"]}</a></li>' for x in nn) or "<li style='color:#aaa'>뉴스 없음</li>"
+
+        # 함수에서 [오늘 5개] + [어제 5개] 순서로 반환됨
+        g_today, g_yesterday = gn[:5], gn[5:10]
+        n_today, n_yesterday = nn[:5], nn[5:10]
+
+        g_today_li     = render_news_list(g_today)
+        g_yesterday_li = render_news_list(g_yesterday)
+        n_today_li     = render_news_list(n_today)
+        n_yesterday_li = render_news_list(n_yesterday)
+
         news_blocks += f"""
         <div style="margin-bottom:14px;padding:14px;background:#fff;border-left:4px solid {col};border-radius:4px">
           <p style="margin:0 0 8px;font-weight:600;font-size:14px">{s['emoji']} {s['name']} ({sym})</p>
-          <p style="margin:0 0 4px;font-size:12px;color:#777;font-weight:600">해외 뉴스 (Google News)</p>
-          <ul style="margin:0 0 10px;padding-left:18px;font-size:13px;line-height:1.6">{g_li}</ul>
-          <p style="margin:0 0 4px;font-size:12px;color:#777;font-weight:600">국내 뉴스 (Naver)</p>
-          <ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.6">{n_li}</ul>
+
+          <p style="margin:0 0 4px;font-size:12px;color:#777;font-weight:600">해외 뉴스 (Google News) — 오늘</p>
+          <ul style="margin:0 0 8px;padding-left:18px;font-size:13px;line-height:1.6">{g_today_li}</ul>
+          <p style="margin:0 0 4px;font-size:12px;color:#777;font-weight:600">해외 뉴스 (Google News) — 어제</p>
+          <ul style="margin:0 0 10px;padding-left:18px;font-size:13px;line-height:1.6">{g_yesterday_li}</ul>
+
+          <p style="margin:0 0 4px;font-size:12px;color:#777;font-weight:600">국내 뉴스 (Naver) — 오늘</p>
+          <ul style="margin:0 0 8px;padding-left:18px;font-size:13px;line-height:1.6">{n_today_li}</ul>
+          <p style="margin:0 0 4px;font-size:12px;color:#777;font-weight:600">국내 뉴스 (Naver) — 어제</p>
+          <ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.6">{n_yesterday_li}</ul>
         </div>"""
 
     # 핵심 한 줄
@@ -260,12 +306,26 @@ def save_markdown(prices, g_news, n_news):
     lines.append("\n---\n\n## 📰 종목별 뉴스\n")
     for s in prices:
         sym = s['symbol']
+        gn  = g_news.get(sym, [])
+        nn  = n_news.get(sym, [])
+        g_today, g_yesterday = gn[:5], gn[5:10]
+        n_today, n_yesterday = nn[:5], nn[5:10]
+
         lines.append(f"### {s['emoji']} {s['name']} ({sym})\n")
-        for item in g_news.get(sym, []):
+
+        lines.append("**해외 뉴스 (Google) — 오늘**")
+        for item in g_today:
             lines.append(f"- [{item['title']}]({item['link']}) _{item['pub']}_")
-        lines.append("")
-        for item in n_news.get(sym, []):
-            lines.append(f"- [{item['title']}]({item['link']})")
+        lines.append("\n**해외 뉴스 (Google) — 어제**")
+        for item in g_yesterday:
+            lines.append(f"- [{item['title']}]({item['link']}) _{item['pub']}_")
+
+        lines.append("\n**국내 뉴스 (Naver) — 오늘**")
+        for item in n_today:
+            lines.append(f"- [{item['title']}]({item['link']}) _{item['pub']}_")
+        lines.append("\n**국내 뉴스 (Naver) — 어제**")
+        for item in n_yesterday:
+            lines.append(f"- [{item['title']}]({item['link']}) _{item['pub']}_")
         lines.append("")
     path = f"briefing_{NOW.strftime('%Y%m%d')}.md"
     with open(path, "w", encoding="utf-8") as f:
