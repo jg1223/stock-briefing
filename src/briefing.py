@@ -6,7 +6,7 @@
 - Gmail SMTP 로 HTML 이메일 실발송
 """
 
-import os, json, smtplib, feedparser, urllib.request, urllib.parse, yfinance as yf
+import os, json, time, smtplib, feedparser, urllib.request, urllib.parse, yfinance as yf
 from datetime import datetime, timezone, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -33,27 +33,37 @@ NOW = datetime.now(KST)
 def get_prices():
     data = []
     for sym, name in PORTFOLIO.items():
-        try:
-            hist = yf.Ticker(sym).history(period="2d")
-            if len(hist) < 2:
-                raise ValueError("데이터 부족")
-            prev = float(hist["Close"].iloc[-2])
-            curr = float(hist["Close"].iloc[-1])
-            chg  = round((curr - prev) / prev * 100, 2)
-            data.append(dict(
-                symbol=sym, name=name,
-                price=round(curr, 2), prev=round(prev, 2),
-                chg=chg,
-                arrow="▲" if chg >= 0 else "▼",
-                sign="+" if chg >= 0 else "",
-                color_hex="#2e7d32" if chg >= 0 else "#c62828",
-                emoji="🟢" if chg >= 0 else "🔴",
-            ))
-        except Exception as e:
-            print(f"[주가 오류] {sym}: {e}")
-            data.append(dict(symbol=sym, name=name, price="N/A", prev="N/A",
-                             chg=0, arrow="", sign="", color_hex="#888",
-                             emoji="⚪"))
+        result = None
+        for attempt in range(3):  # 최대 3회 재시도
+            try:
+                hist = yf.Ticker(sym).history(period="2d")
+                if len(hist) < 2:
+                    raise ValueError("데이터 부족")
+                prev = float(hist["Close"].iloc[-2])
+                curr = float(hist["Close"].iloc[-1])
+                chg  = round((curr - prev) / prev * 100, 2)
+                result = dict(
+                    symbol=sym, name=name,
+                    price=round(curr, 2), prev=round(prev, 2),
+                    chg=chg,
+                    arrow="▲" if chg >= 0 else "▼",
+                    sign="+" if chg >= 0 else "",
+                    color_hex="#2e7d32" if chg >= 0 else "#c62828",
+                    emoji="🟢" if chg >= 0 else "🔴",
+                )
+                break
+            except Exception as e:
+                print(f"[주가 오류] {sym} (시도 {attempt+1}/3): {e}")
+                if attempt < 2:
+                    time.sleep(5)  # 재시도 전 대기
+
+        if result is None:
+            result = dict(symbol=sym, name=name, price="N/A", prev="N/A",
+                           chg=0, arrow="", sign="", color_hex="#888",
+                           emoji="⚪")
+        data.append(result)
+
+        time.sleep(2)  # 종목 간 간격 (rate limit 방지)
     return data
 
 
