@@ -6,10 +6,17 @@
 - Gmail SMTP 로 HTML 이메일 실발송
 """
 
-import os, json, time, smtplib, feedparser, urllib.request, urllib.parse, yfinance as yf
+import os, json, time, smtplib, feedparser, urllib.request, urllib.parse, yfinance as yf, requests
 from datetime import datetime, timezone, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+
+# yfinance 차단 우회용 브라우저 헤더 세션
+_YF_SESSION = requests.Session()
+_YF_SESSION.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+})
 
 # ── 환경변수 (GitHub Secrets 에서 주입) ──────────────────────
 SENDER_EMAIL    = os.environ["SENDER_EMAIL"]
@@ -34,9 +41,10 @@ def get_prices():
     data = []
     for sym, name in PORTFOLIO.items():
         result = None
-        for attempt in range(3):  # 최대 3회 재시도
+        for attempt in range(4):  # 최대 4회 재시도
             try:
-                hist = yf.Ticker(sym).history(period="2d")
+                ticker = yf.Ticker(sym, session=_YF_SESSION)
+                hist = ticker.history(period="5d")
                 if len(hist) < 2:
                     raise ValueError("데이터 부족")
                 prev = float(hist["Close"].iloc[-2])
@@ -53,9 +61,9 @@ def get_prices():
                 )
                 break
             except Exception as e:
-                print(f"[주가 오류] {sym} (시도 {attempt+1}/3): {e}")
-                if attempt < 2:
-                    time.sleep(5)  # 재시도 전 대기
+                print(f"[주가 오류] {sym} (시도 {attempt+1}/4): {e}")
+                if attempt < 3:
+                    time.sleep(15)  # 재시도 전 대기 (차단 해제 시간 확보)
 
         if result is None:
             result = dict(symbol=sym, name=name, price="N/A", prev="N/A",
@@ -63,7 +71,7 @@ def get_prices():
                            emoji="⚪")
         data.append(result)
 
-        time.sleep(2)  # 종목 간 간격 (rate limit 방지)
+        time.sleep(3)  # 종목 간 간격 (rate limit 방지)
     return data
 
 
