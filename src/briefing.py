@@ -6,12 +6,12 @@
 - Gmail SMTP 로 HTML 이메일 실발송
 """
 
-import os, json, time, smtplib, feedparser, urllib.request, urllib.parse, yfinance as yf, requests
+import os, json, time, smtplib, feedparser, urllib.request, urllib.parse, csv, io, yfinance as yf, requests
 from datetime import datetime, timezone, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-# yfinance 차단 우회용 브라우저 헤더 세션
+# yfinance 차단 우회용 브라우저 헤더 세션 (백업용으로 유지)
 _YF_SESSION = requests.Session()
 _YF_SESSION.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -37,33 +37,104 @@ NOW = datetime.now(KST)
 
 
 # ── 1. 주가 ──────────────────────────────────────────────────
+def _make_result(sym, name, prev, curr):
+    chg = round((curr - prev) / prev * 100, 2)
+    return dict(
+        symbol=sym, name=name,
+        price=round(curr, 2), prev=round(prev, 2),
+        chg=chg,
+        arrow="▲" if chg >= 0 else "▼",
+        sign="+" if chg >= 0 else "",
+        color_hex="#2e7d32" if chg >= 0 else "#c62828",
+        emoji="🟢" if chg >= 0 else "🔴",
+    )
+
+
+def _fetch_naver(sym):
+    """네이버 금융 해외증시 API 에서 현재가/전일종가 가져오기 (1차 시도)"""
+    url = f"https://api.stock.naver.com/stock/{sym}.O/basic"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        data = json.loads(r.read().decode("utf-8"))
+
+    curr = data.get("closePrice") or data.get("currentPrice") or data.get("now")
+    prev = data.get("previousClose") or data.get("closePriceBeforeDay")
+
+    if curr is None or prev is None:
+        raise ValueError("네이버 응답 필드 누락")
+
+    def to_float(v):
+        if isinstance(v, str):
+            v = v.replace(",", "")
+        return float(v)
+
+    return to_float(prev), to_float(curr)
+
+
+def _fetch_stooq(sym):
+    """Stooq CSV 에서 최근 2거래일 종가 가져오기 (yfinance 대체, IP 차단 거의 없음)"""
+    url = f"https://stooq.com/q/d/l/?s={sym.lower()}.us&i=d"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        text = r.read().decode("utf-8")
+    rows = list(csv.DictReader(io.StringIO(text)))
+    if len(rows) < 2:
+        raise ValueError("Stooq 데이터 부족")
+    prev = float(rows[-2]["Close"])
+    curr = float(rows[-1]["Close"])
+    return prev, curr
+
+
+def _fetch_yfinance(sym):
+    """yfinance 백업 (Stooq 실패 시도)"""
+    ticker = yf.Ticker(sym, session=_YF_SESSION)
+    hist = ticker.history(period="5d")
+    if len(hist) < 2:
+        raise ValueError("yfinance 데이터 부족")
+    prev = float(hist["Close"].iloc[-2])
+    curr = float(hist["Close"].iloc[-1])
+    return prev, curr
+
+
 def get_prices():
     data = []
     for sym, name in PORTFOLIO.items():
         result = None
-        for attempt in range(4):  # 최대 4회 재시도
+
+        # 1차: 네이버 금융 시도 (최대 2회)
+        for attempt in range(2):
             try:
-                ticker = yf.Ticker(sym, session=_YF_SESSION)
-                hist = ticker.history(period="5d")
-                if len(hist) < 2:
-                    raise ValueError("데이터 부족")
-                prev = float(hist["Close"].iloc[-2])
-                curr = float(hist["Close"].iloc[-1])
-                chg  = round((curr - prev) / prev * 100, 2)
-                result = dict(
-                    symbol=sym, name=name,
-                    price=round(curr, 2), prev=round(prev, 2),
-                    chg=chg,
-                    arrow="▲" if chg >= 0 else "▼",
-                    sign="+" if chg >= 0 else "",
-                    color_hex="#2e7d32" if chg >= 0 else "#c62828",
-                    emoji="🟢" if chg >= 0 else "🔴",
-                )
+                prev, curr = _fetch_naver(sym)
+                result = _make_result(sym, name, prev, curr)
                 break
             except Exception as e:
-                print(f"[주가 오류] {sym} (시도 {attempt+1}/4): {e}")
-                if attempt < 3:
-                    time.sleep(15)  # 재시도 전 대기 (차단 해제 시간 확보)
+                print(f"[Naver금융 오류] {sym} (시도 {attempt+1}/2): {e}")
+                if attempt == 0:
+                    time.sleep(2)
+
+        # 2차: Stooq 폴백 (최대 2회)
+        if result is None:
+            for attempt in range(2):
+                try:
+                    prev, curr = _fetch_stooq(sym)
+                    result = _make_result(sym, name, prev, curr)
+                    break
+                except Exception as e:
+                    print(f"[Stooq 오류] {sym} (시도 {attempt+1}/2): {e}")
+                    if attempt == 0:
+                        time.sleep(2)
+
+        # 3차: yfinance 최종 백업 (최대 2회)
+        if result is None:
+            for attempt in range(2):
+                try:
+                    prev, curr = _fetch_yfinance(sym)
+                    result = _make_result(sym, name, prev, curr)
+                    break
+                except Exception as e:
+                    print(f"[yfinance 오류] {sym} (시도 {attempt+1}/2): {e}")
+                    if attempt == 0:
+                        time.sleep(5)
 
         if result is None:
             result = dict(symbol=sym, name=name, price="N/A", prev="N/A",
@@ -71,7 +142,7 @@ def get_prices():
                            emoji="⚪")
         data.append(result)
 
-        time.sleep(3)  # 종목 간 간격 (rate limit 방지)
+        time.sleep(1)  # 종목 간 간격
     return data
 
 
