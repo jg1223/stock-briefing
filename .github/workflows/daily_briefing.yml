@@ -1,5 +1,6 @@
 name: 📈 Daily Stock Briefing
 
+
 on:
   schedule:
     - cron: '10 9 * * 1-5'   # 평일 KST 17:00 (UTC 08:00)
