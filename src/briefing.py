@@ -51,24 +51,34 @@ def _make_result(sym, name, prev, curr):
 
 
 def _fetch_naver(sym):
-    """네이버 금융 해외증시 API 에서 현재가/전일종가 가져오기 (1차 시도)"""
-    url = f"https://api.stock.naver.com/stock/{sym}.O/basic"
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    """네이버 금융(모바일) 해외증시 API 에서 현재가/전일종가 가져오기 (1차 시도)"""
+    url = f"https://m.stock.naver.com/api/stock/{sym}.O/basic"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36",
+        "Accept": "application/json",
+    })
     with urllib.request.urlopen(req, timeout=10) as r:
-        data = json.loads(r.read().decode("utf-8"))
+        raw_text = r.read().decode("utf-8")
 
-    curr = data.get("closePrice") or data.get("currentPrice") or data.get("now")
-    prev = data.get("previousClose") or data.get("closePriceBeforeDay")
-
-    if curr is None or prev is None:
-        raise ValueError("네이버 응답 필드 누락")
+    try:
+        data = json.loads(raw_text)
+    except Exception:
+        raise ValueError(f"JSON 파싱 실패: {raw_text[:200]}")
 
     def to_float(v):
+        if v is None:
+            return None
         if isinstance(v, str):
             v = v.replace(",", "")
         return float(v)
 
-    return to_float(prev), to_float(curr)
+    curr = to_float(data.get("closePrice"))
+    prev = to_float(data.get("previousClose"))
+
+    if curr is None or prev is None:
+        raise ValueError(f"필드 누락. keys={list(data.keys())[:15]}")
+
+    return prev, curr
 
 
 def _fetch_stooq(sym):
@@ -77,9 +87,13 @@ def _fetch_stooq(sym):
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=15) as r:
         text = r.read().decode("utf-8")
+
     rows = list(csv.DictReader(io.StringIO(text)))
+    if not rows or "Close" not in rows[0]:
+        raise ValueError(f"Stooq 응답 이상: {text[:150]!r}")
     if len(rows) < 2:
-        raise ValueError("Stooq 데이터 부족")
+        raise ValueError(f"Stooq 데이터 부족 (행 {len(rows)}개): {text[:150]!r}")
+
     prev = float(rows[-2]["Close"])
     curr = float(rows[-1]["Close"])
     return prev, curr
