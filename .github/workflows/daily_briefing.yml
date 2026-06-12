@@ -2,10 +2,8 @@ name: 📈 Daily Stock Briefing
 
 on:
   schedule:
-    #- cron: '0 9 * * 1-5'   # 평일 KST 18:00 (UTC 09:00)
-    - cron: '0 8 * * 1-5'   # 평일 KST 17:00 (UTC 09:00)
-    
-  workflow_dispatch:          # 수동 실행 버튼 (테스트용)
+    - cron: '0 8 * * 1-5'   # 평일 KST 17:00 (UTC 08:00)
+  workflow_dispatch:
 
 jobs:
   briefing:
