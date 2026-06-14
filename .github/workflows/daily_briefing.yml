@@ -2,7 +2,7 @@ name: Daily Stock Briefing
 
 on:
   schedule:
-    - cron: '*/15 * * * *'   # 테스트용: 10분마다 실행 (검증 후 원복)
+    - cron: '0 0 * * 1-5'
   workflow_dispatch:
 
 jobs:
@@ -39,5 +39,3 @@ jobs:
           name: briefing-${{ github.run_id }}
           path: briefing_*.md
           retention-days: 30
-
-
