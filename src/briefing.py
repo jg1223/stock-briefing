@@ -201,18 +201,26 @@ def get_prices():
 
 
 # ── 2. Google News RSS ────────────────────────────────────────
-def google_news(query: str, n_today=5, n_yesterday=5):
-    """오늘 뉴스 n_today개 + 어제 뉴스 n_yesterday개 반환"""
+def google_news(query: str, n_today=5, n_yesterday=5, keywords=None):
+    """오늘 뉴스 n_today개 + 어제 뉴스 n_yesterday개 반환 (키워드 필터 적용)"""
     enc = urllib.parse.quote(query)
     url = (f"https://news.google.com/rss/search"
            f"?q={enc}&hl=ko&gl=KR&ceid=KR:ko")
     today_date     = NOW.date()
     yesterday_date = (NOW - timedelta(days=1)).date()
 
+    def is_relevant(title):
+        if not keywords:
+            return True
+        title_lower = title.lower()
+        return any(kw.lower() in title_lower for kw in keywords)
+
     today_items, yesterday_items = [], []
     try:
         feed = feedparser.parse(url)
         for e in feed.entries:
+            if not is_relevant(e.title):
+                continue
             pub = datetime(*e.published_parsed[:6], tzinfo=timezone.utc).astimezone(KST)
             item = {"title": e.title, "link": e.link,
                     "pub": pub.strftime("%m/%d %H:%M")}
@@ -230,8 +238,8 @@ def google_news(query: str, n_today=5, n_yesterday=5):
 
 
 # ── 3. Naver News API ─────────────────────────────────────────
-def naver_news(query: str, n_today=5, n_yesterday=5):
-    """오늘 뉴스 n_today개 + 어제 뉴스 n_yesterday개 반환"""
+def naver_news(query: str, n_today=5, n_yesterday=5, keywords=None):
+    """오늘 뉴스 n_today개 + 어제 뉴스 n_yesterday개 반환 (키워드 필터 적용)"""
     if not NAVER_ID or not NAVER_SECRET:
         return []
     enc = urllib.parse.quote(query)
@@ -250,12 +258,21 @@ def naver_news(query: str, n_today=5, n_yesterday=5):
     try:
         with urllib.request.urlopen(req) as r:
             raw = json.loads(r.read().decode())
+        def is_relevant(title):
+            if not keywords:
+                return True
+            title_lower = title.lower()
+            return any(kw.lower() in title_lower for kw in keywords)
+
         for it in raw.get("items", []):
             try:
                 pub_dt = datetime.strptime(it.get("pubDate",""), "%a, %d %b %Y %H:%M:%S %z").astimezone(KST)
             except Exception:
                 continue
-            item = {"title": it["title"].replace("<b>","").replace("</b>",""),
+            raw_title = it["title"].replace("<b>","").replace("</b>","")
+            if not is_relevant(raw_title):
+                continue
+            item = {"title": raw_title,
                     "link":  it.get("originallink") or it["link"],
                     "pub":   pub_dt.strftime("%m/%d %H:%M")}
             if pub_dt.date() == today_date and len(today_items) < n_today:
@@ -272,17 +289,18 @@ def naver_news(query: str, n_today=5, n_yesterday=5):
 
 
 # ── 4. 뉴스 수집 ─────────────────────────────────────────────
+# (구글쿼리, 네이버쿼리, 제목필터 키워드 목록)
 NEWS_QUERIES = {
-    "DIS":  ("디즈니 주식",          "디즈니 주식"),
-    "AAPL": ("애플 주식",            "애플 주식"),
-    "MSFT": ("마이크로소프트 주식",   "마이크로소프트 주식"),
+    "DIS":  ("디즈니 주식",         "디즈니",         ["디즈니", "Disney", "DIS"]),
+    "AAPL": ("애플 주식 AAPL",      "애플 주가 AAPL", ["애플", "Apple", "AAPL", "아이폰"]),
+    "MSFT": ("마이크로소프트 주식",  "마이크로소프트",  ["마이크로소프트", "Microsoft", "MSFT"]),
 }
 
 def collect_news():
     g, n = {}, {}
-    for sym, (q_en, q_ko) in NEWS_QUERIES.items():
-        g[sym] = google_news(q_en)
-        n[sym] = naver_news(q_ko)
+    for sym, (q_en, q_ko, keywords) in NEWS_QUERIES.items():
+        g[sym] = google_news(q_en, keywords=keywords)
+        n[sym] = naver_news(q_ko, keywords=keywords)
     return g, n
 
 
