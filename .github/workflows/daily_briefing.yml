@@ -1,13 +1,9 @@
 name: 📈 Daily Stock Briefing
 
 on:
-  # schedule:
-  #   - cron: '0 0 * * 1-5'   # 평일 KST 09:00 (UTC 00:00)
-  # workflow_dispatch:
-
-    schedule:
-    - cron: '*/5 * * * *'   # 테스트용: 15분마다 실행 (검증 후 원복)
-    workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'   # 테스트용: 5분마다 실행 (검증 후 원복)
+  workflow_dispatch:
 
 jobs:
   briefing:
