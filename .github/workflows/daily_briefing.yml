@@ -40,3 +40,4 @@ jobs:
           name: briefing-${{ github.run_id }}
           path: briefing_*.md
           retention-days: 30
+
