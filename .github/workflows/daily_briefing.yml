@@ -2,13 +2,13 @@ name: Daily Stock Briefing
 
 on:
   schedule:
-    - cron: '*/10 * * * *'   # 테스트용: 10분마다 실행 (검증 후 원복)
+    - cron: '*/15 * * * *'   # 테스트용: 10분마다 실행 (검증 후 원복)
   workflow_dispatch:
 
 jobs:
   briefing:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repo
