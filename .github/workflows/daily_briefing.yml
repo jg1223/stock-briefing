@@ -2,7 +2,7 @@ name: 📈 Daily Stock Briefing
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # 테스트용: 5분마다 실행 (검증 후 원복)
+    - cron: '*/10 * * * *'   # 테스트용: 10분마다 실행 (검증 후 원복)
   workflow_dispatch:
 
 jobs:
