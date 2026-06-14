@@ -1,4 +1,4 @@
-name: 재등록 일정 변경 (2026-06-14)
+name: Daily Stock Briefing
 
 on:
   schedule:
