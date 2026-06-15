@@ -298,8 +298,8 @@ NEWS_QUERIES = {
         ["디즈니", "Disney", "DIS"],
     ),
     "AAPL": (
-        "애플 OR Apple OR 아이폰 OR iPhone AAPL stock",
-        "애플",
+        "AAPL Apple 애플 주식",          # Google News 검색어 (OR 제거)
+        "애플 AAPL",                      # Naver 검색어
         ["애플", "Apple", "AAPL", "아이폰", "iPhone"],
         ["애플", "아이폰", "Apple", "AAPL"],
     ),
