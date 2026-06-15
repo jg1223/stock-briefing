@@ -292,21 +292,21 @@ def naver_news(query: str, n_today=5, n_yesterday=5, keywords=None):
 # (구글쿼리, 네이버쿼리, 제목필터 키워드 목록)
 NEWS_QUERIES = {
     "DIS":  (
-        "Disney stock",      # Google News 검색어 (영어)
-        "디즈니",             # Naver 검색어 (한국어)
-        ["디즈니", "Disney", "DIS"],           # Google 필터
-        ["디즈니", "Disney", "DIS"],           # Naver 필터
+        "디즈니 OR Disney OR DIS stock",
+        "디즈니",
+        ["디즈니", "Disney", "DIS"],
+        ["디즈니", "Disney", "DIS"],
     ),
     "AAPL": (
-        "Apple AAPL stock",  # Google News 검색어 (영어)
-        "애플",               # Naver 검색어 (한국어)
-        ["Apple", "AAPL", "iPhone"],           # Google 필터 (영어만)
-        ["애플", "아이폰", "Apple", "AAPL"],   # Naver 필터 (한국어 포함)
+        "애플 OR Apple OR 아이폰 OR iPhone AAPL stock",
+        "애플",
+        ["애플", "Apple", "AAPL", "아이폰", "iPhone"],
+        ["애플", "아이폰", "Apple", "AAPL"],
     ),
     "MSFT": (
-        "Microsoft MSFT stock",
+        "마이크로소프트 OR Microsoft MSFT stock",
         "마이크로소프트",
-        ["Microsoft", "MSFT"],
+        ["마이크로소프트", "Microsoft", "MSFT"],
         ["마이크로소프트", "Microsoft", "MSFT"],
     ),
 }
@@ -531,9 +531,10 @@ def send_email(prices, g_news, n_news):
     msg.attach(MIMEText(plain, "plain", "utf-8"))
     msg.attach(MIMEText(html,  "html",  "utf-8"))
 
+    recipients = [r.strip() for r in RECIPIENT_EMAIL.split(",")]
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
         s.login(SENDER_EMAIL, SENDER_PASSWORD)
-        s.sendmail(SENDER_EMAIL, RECIPIENT_EMAIL, msg.as_string())
+        s.sendmail(SENDER_EMAIL, recipients, msg.as_string())
 
     print(f"[발송 완료] {subject}")
 
