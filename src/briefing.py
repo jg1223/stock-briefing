@@ -291,16 +291,31 @@ def naver_news(query: str, n_today=5, n_yesterday=5, keywords=None):
 # ── 4. 뉴스 수집 ─────────────────────────────────────────────
 # (구글쿼리, 네이버쿼리, 제목필터 키워드 목록)
 NEWS_QUERIES = {
-    "DIS":  ("디즈니 주식",         "디즈니",         ["디즈니", "Disney", "DIS"]),
-    "AAPL": ("애플 주식 AAPL",      "애플 주가 AAPL", ["애플", "Apple", "AAPL", "아이폰"]),
-    "MSFT": ("마이크로소프트 주식",  "마이크로소프트",  ["마이크로소프트", "Microsoft", "MSFT"]),
+    "DIS":  (
+        "Disney stock",      # Google News 검색어 (영어)
+        "디즈니",             # Naver 검색어 (한국어)
+        ["디즈니", "Disney", "DIS"],           # Google 필터
+        ["디즈니", "Disney", "DIS"],           # Naver 필터
+    ),
+    "AAPL": (
+        "Apple AAPL stock",  # Google News 검색어 (영어)
+        "애플",               # Naver 검색어 (한국어)
+        ["Apple", "AAPL", "iPhone"],           # Google 필터 (영어만)
+        ["애플", "아이폰", "Apple", "AAPL"],   # Naver 필터 (한국어 포함)
+    ),
+    "MSFT": (
+        "Microsoft MSFT stock",
+        "마이크로소프트",
+        ["Microsoft", "MSFT"],
+        ["마이크로소프트", "Microsoft", "MSFT"],
+    ),
 }
 
 def collect_news():
     g, n = {}, {}
-    for sym, (q_en, q_ko, keywords) in NEWS_QUERIES.items():
-        g[sym] = google_news(q_en, keywords=keywords)
-        n[sym] = naver_news(q_ko, keywords=keywords)
+    for sym, (q_google, q_naver, g_keywords, n_keywords) in NEWS_QUERIES.items():
+        g[sym] = google_news(q_google, keywords=g_keywords)
+        n[sym] = naver_news(q_naver, keywords=n_keywords)
     return g, n
 
 
