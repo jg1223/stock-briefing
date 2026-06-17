@@ -186,60 +186,74 @@ def google_news(query: str, n_today=5, n_week=10, keywords=None):
                 break
     except Exception as ex:
         print(f"[Google RSS 오류] {query}: {ex}")
-    return {"today": today_items, "week": week_items}   # ← dict로 반환
+    return {"today": today_items, "week": week_items}
 
 
 # ── 3. Naver News API ─────────────────────────────────────────
-def naver_news(query: str, n_today=5, n_week=10, keywords=None):
+def naver_news(query: str, n_today=5, n_week=10):
     """
     오늘/최근7일 뉴스를 dict로 분리 반환:
       {"today": [...], "week": [...]}
+    키워드 필터 없음 — Naver API 쿼리 자체가 관련성을 보장하므로 제목 필터 불필요.
+    페이지네이션으로 최대 100개씩 최대 3페이지 조회.
     """
     if not NAVER_ID or not NAVER_SECRET:
         return {"today": [], "week": []}
-    enc = urllib.parse.quote(query)
-    display = max(n_today, n_week) * 6
-    url = (f"https://openapi.naver.com/v1/search/news.json"
-           f"?query={enc}&display={display}&sort=date")
-    req = urllib.request.Request(url)
-    req.add_header("X-Naver-Client-Id", NAVER_ID)
-    req.add_header("X-Naver-Client-Secret", NAVER_SECRET)
 
     today_date    = NOW.date()
     week_ago_date = (NOW - timedelta(days=7)).date()
     today_items, week_items = [], []
 
-    try:
-        with urllib.request.urlopen(req) as r:
-            raw = json.loads(r.read().decode())
+    enc = urllib.parse.quote(query)
 
-        def is_relevant(title):
-            if not keywords: return True
-            return any(kw.lower() in title.lower() for kw in keywords)
+    for start in range(1, 301, 100):   # 1, 101, 201 → 최대 3페이지 × 100개
+        url = (f"https://openapi.naver.com/v1/search/news.json"
+               f"?query={enc}&display=100&start={start}&sort=date")
+        req = urllib.request.Request(url)
+        req.add_header("X-Naver-Client-Id", NAVER_ID)
+        req.add_header("X-Naver-Client-Secret", NAVER_SECRET)
 
-        for it in raw.get("items", []):
+        try:
+            with urllib.request.urlopen(req) as r:
+                raw = json.loads(r.read().decode())
+        except Exception as ex:
+            print(f"[Naver 오류] {query} (start={start}): {ex}")
+            break
+
+        items = raw.get("items", [])
+        if not items:
+            break   # 더 이상 결과 없으면 중단
+
+        oldest_in_page = None
+        for it in items:
             try:
                 pub_dt = datetime.strptime(
-                    it.get("pubDate",""), "%a, %d %b %Y %H:%M:%S %z"
+                    it.get("pubDate", ""), "%a, %d %b %Y %H:%M:%S %z"
                 ).astimezone(KST)
             except Exception:
                 continue
-            raw_title = it["title"].replace("<b>","").replace("</b>","")
-            if not is_relevant(raw_title):
-                continue
+
+            pub_date = pub_dt.date()
+            oldest_in_page = pub_date   # sort=date이므로 마지막이 가장 오래된 것
+
+            raw_title = it["title"].replace("<b>", "").replace("</b>", "")
             item = {"title": raw_title,
                     "link": it.get("originallink") or it["link"],
                     "pub":  pub_dt.strftime("%m/%d %H:%M")}
-            pub_date = pub_dt.date()
+
             if pub_date == today_date and len(today_items) < n_today:
                 today_items.append(item)
             elif week_ago_date <= pub_date < today_date and len(week_items) < n_week:
                 week_items.append(item)
+
             if len(today_items) >= n_today and len(week_items) >= n_week:
-                break
-    except Exception as ex:
-        print(f"[Naver 오류] {query}: {ex}")
-    return {"today": today_items, "week": week_items}   # ← dict로 반환
+                return {"today": today_items, "week": week_items}
+
+        # 이 페이지의 가장 오래된 기사가 이미 7일 이전이면 더 볼 필요 없음
+        if oldest_in_page and oldest_in_page < week_ago_date:
+            break
+
+    return {"today": today_items, "week": week_items}
 
 
 # ── 4. 뉴스 수집 ─────────────────────────────────────────────
@@ -248,27 +262,24 @@ NEWS_QUERIES = {
         "디즈니 OR Disney OR DIS stock",
         "디즈니",
         ["디즈니", "Disney", "DIS"],
-        ["디즈니", "Disney", "DIS"],
     ),
     "AAPL": (
         "AAPL Apple 애플 주식",
         "애플 AAPL",
         ["애플", "Apple", "AAPL", "아이폰", "iPhone"],
-        ["애플", "아이폰", "Apple", "AAPL"],
     ),
     "MSFT": (
         "마이크로소프트 OR Microsoft MSFT stock",
         "마이크로소프트",
-        ["마이크로소프트", "Microsoft", "MSFT"],
         ["마이크로소프트", "Microsoft", "MSFT"],
     ),
 }
 
 def collect_news():
     g, n = {}, {}
-    for sym, (q_google, q_naver, g_keywords, n_keywords) in NEWS_QUERIES.items():
+    for sym, (q_google, q_naver, g_keywords) in NEWS_QUERIES.items():
         g[sym] = google_news(q_google, keywords=g_keywords)   # {"today":[], "week":[]}
-        n[sym] = naver_news(q_naver, keywords=n_keywords)     # {"today":[], "week":[]}
+        n[sym] = naver_news(q_naver)                          # {"today":[], "week":[]} — 필터 없음
     return g, n
 
 
@@ -299,7 +310,6 @@ def build_html(prices, g_news, n_news):
     for s in prices:
         sym = s['symbol']
         col = accent.get(sym, "#555")
-        # ← dict에서 직접 꺼냄 (슬라이싱 없음)
         g_today = g_news.get(sym, {}).get("today", [])
         g_week  = g_news.get(sym, {}).get("week",  [])
         n_today = n_news.get(sym, {}).get("today", [])
@@ -420,7 +430,6 @@ def save_markdown(prices, g_news, n_news):
     lines.append("\n---\n\n## 📰 종목별 뉴스\n")
     for s in prices:
         sym = s['symbol']
-        # ← dict에서 직접 꺼냄 (슬라이싱 없음)
         g_today = g_news.get(sym, {}).get("today", [])
         g_week  = g_news.get(sym, {}).get("week",  [])
         n_today = n_news.get(sym, {}).get("today", [])
