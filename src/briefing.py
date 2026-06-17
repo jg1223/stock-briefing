@@ -190,23 +190,41 @@ def google_news(query: str, n_today=5, n_week=10, keywords=None):
 
 
 # ── 3. Naver News API ─────────────────────────────────────────
+
+# 종목별 관련 키워드 (제목에 하나라도 포함되면 통과)
+NAVER_KEYWORDS = {
+    "디즈니":       ["디즈니", "Disney", "DIS", "픽사", "마블", "스타워즈", "ESPN", "Hulu"],
+    "애플 AAPL":    ["애플", "Apple", "AAPL", "아이폰", "iPhone", "아이패드", "iPad",
+                     "맥북", "MacBook", "앱스토어", "App Store", "팀 쿡", "Tim Cook"],
+    "마이크로소프트": ["마이크로소프트", "Microsoft", "MSFT", "윈도우", "Windows",
+                      "코파일럿", "Copilot", "애저", "Azure", "엑스박스", "Xbox",
+                      "빙", "Bing", "오피스", "Office", "서피스", "Surface",
+                      "사티아", "나델라", "Nadella", "Teams"],
+}
+
 def naver_news(query: str, n_today=5, n_week=10):
     """
-    오늘/최근7일 뉴스를 dict로 분리 반환:
-      {"today": [...], "week": [...]}
-    키워드 필터 없음 — Naver API 쿼리 자체가 관련성을 보장하므로 제목 필터 불필요.
-    페이지네이션으로 최대 100개씩 최대 3페이지 조회.
+    오늘/최근7일 뉴스를 dict로 분리 반환: {"today": [...], "week": [...]}
+    - 키워드 필터로 무관한 인기 기사 제거
+    - 페이지네이션(최대 300개)으로 충분한 풀 확보
+    - 7일 이전 기사가 나오면 조기 종료
     """
     if not NAVER_ID or not NAVER_SECRET:
         return {"today": [], "week": []}
 
+    keywords = NAVER_KEYWORDS.get(query, [])
+
+    def is_relevant(title):
+        if not keywords:
+            return True
+        return any(kw.lower() in title.lower() for kw in keywords)
+
+    enc           = urllib.parse.quote(query)
     today_date    = NOW.date()
     week_ago_date = (NOW - timedelta(days=7)).date()
     today_items, week_items = [], []
 
-    enc = urllib.parse.quote(query)
-
-    for start in range(1, 301, 100):   # 1, 101, 201 → 최대 3페이지 × 100개
+    for start in range(1, 301, 100):   # 1, 101, 201 → 최대 300개
         url = (f"https://openapi.naver.com/v1/search/news.json"
                f"?query={enc}&display=100&start={start}&sort=date")
         req = urllib.request.Request(url)
@@ -220,12 +238,12 @@ def naver_news(query: str, n_today=5, n_week=10):
             print(f"[Naver 오류] {query} (start={start}): {ex}")
             break
 
-        items = raw.get("items", [])
-        if not items:
-            break   # 더 이상 결과 없으면 중단
+        page_items = raw.get("items", [])
+        if not page_items:
+            break
 
-        oldest_in_page = None
-        for it in items:
+        all_too_old = True   # 이 페이지 기사가 전부 7일 이전이면 중단
+        for it in page_items:
             try:
                 pub_dt = datetime.strptime(
                     it.get("pubDate", ""), "%a, %d %b %Y %H:%M:%S %z"
@@ -234,12 +252,17 @@ def naver_news(query: str, n_today=5, n_week=10):
                 continue
 
             pub_date = pub_dt.date()
-            oldest_in_page = pub_date   # sort=date이므로 마지막이 가장 오래된 것
+            if pub_date >= week_ago_date:
+                all_too_old = False   # 아직 범위 안에 있는 기사 존재
 
             raw_title = it["title"].replace("<b>", "").replace("</b>", "")
+
+            if not is_relevant(raw_title):
+                continue   # 무관한 기사 제거
+
             item = {"title": raw_title,
-                    "link": it.get("originallink") or it["link"],
-                    "pub":  pub_dt.strftime("%m/%d %H:%M")}
+                    "link":  it.get("originallink") or it["link"],
+                    "pub":   pub_dt.strftime("%m/%d %H:%M")}
 
             if pub_date == today_date and len(today_items) < n_today:
                 today_items.append(item)
@@ -249,9 +272,8 @@ def naver_news(query: str, n_today=5, n_week=10):
             if len(today_items) >= n_today and len(week_items) >= n_week:
                 return {"today": today_items, "week": week_items}
 
-        # 이 페이지의 가장 오래된 기사가 이미 7일 이전이면 더 볼 필요 없음
-        if oldest_in_page and oldest_in_page < week_ago_date:
-            break
+        if all_too_old:
+            break   # 7일 범위를 완전히 벗어났으므로 추가 페이지 불필요
 
     return {"today": today_items, "week": week_items}
 
