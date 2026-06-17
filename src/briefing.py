@@ -11,21 +11,18 @@ from datetime import datetime, timezone, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-# yfinance 차단 우회용 브라우저 헤더 세션 (백업용으로 유지)
 _YF_SESSION = requests.Session()
 _YF_SESSION.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 })
 
-# ── 환경변수 (GitHub Secrets 에서 주입) ──────────────────────
 SENDER_EMAIL    = os.environ["SENDER_EMAIL"]
 SENDER_PASSWORD = os.environ["SENDER_PASSWORD"]
 RECIPIENT_EMAIL = os.environ["RECIPIENT_EMAIL"]
 NAVER_ID        = os.environ.get("NAVER_CLIENT_ID", "")
 NAVER_SECRET    = os.environ.get("NAVER_CLIENT_SECRET", "")
 
-# ── 포트폴리오 ────────────────────────────────────────────────
 PORTFOLIO = {
     "DIS":  "디즈니",
     "AAPL": "애플",
@@ -49,7 +46,6 @@ def _make_result(sym, name, prev, curr):
         emoji="🟢" if chg >= 0 else "🔴",
     )
 
-
 def _fetch_naver(sym):
     url = f"https://m.stock.naver.com/api/stock/{sym}/basic"
     req = urllib.request.Request(url, headers={
@@ -59,27 +55,19 @@ def _fetch_naver(sym):
     })
     with urllib.request.urlopen(req, timeout=10) as r:
         raw_text = r.read().decode("utf-8")
-
     try:
         data = json.loads(raw_text)
     except Exception:
         raise ValueError(f"JSON 파싱 실패: {raw_text[:200]}")
-
     def to_float(v):
-        if v is None:
-            return None
-        if isinstance(v, str):
-            v = v.replace(",", "")
+        if v is None: return None
+        if isinstance(v, str): v = v.replace(",", "")
         return float(v)
-
     curr = to_float(data.get("closePrice"))
     prev = to_float(data.get("previousClose"))
-
     if curr is None or prev is None:
         raise ValueError(f"필드 누락. keys={list(data.keys())[:15]}")
-
     return prev, curr
-
 
 def _fetch_yahoo_chart(sym):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=5d&interval=1d"
@@ -90,101 +78,71 @@ def _fetch_yahoo_chart(sym):
     })
     with urllib.request.urlopen(req, timeout=10) as r:
         data = json.loads(r.read().decode("utf-8"))
-
     result = data.get("chart", {}).get("result")
     if not result:
-        err = data.get("chart", {}).get("error")
-        raise ValueError(f"Yahoo Chart 응답 오류: {err}")
-
-    closes = result[0]["indicators"]["quote"][0]["close"]
-    closes = [c for c in closes if c is not None]
+        raise ValueError(f"Yahoo Chart 응답 오류: {data.get('chart', {}).get('error')}")
+    closes = [c for c in result[0]["indicators"]["quote"][0]["close"] if c is not None]
     if len(closes) < 2:
         raise ValueError("Yahoo Chart 데이터 부족")
-
-    prev = float(closes[-2])
-    curr = float(closes[-1])
-    return prev, curr
-
+    return float(closes[-2]), float(closes[-1])
 
 def _fetch_stooq(sym):
     url = f"https://stooq.com/q/d/l/?s={sym.lower()}.us&i=d"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=15) as r:
         text = r.read().decode("utf-8")
-
     rows = list(csv.DictReader(io.StringIO(text)))
     if not rows or "Close" not in rows[0]:
         raise ValueError(f"Stooq 응답 이상: {text[:150]!r}")
     if len(rows) < 2:
-        raise ValueError(f"Stooq 데이터 부족 (행 {len(rows)}개): {text[:150]!r}")
-
-    prev = float(rows[-2]["Close"])
-    curr = float(rows[-1]["Close"])
-    return prev, curr
-
+        raise ValueError(f"Stooq 데이터 부족: {text[:150]!r}")
+    return float(rows[-2]["Close"]), float(rows[-1]["Close"])
 
 def _fetch_yfinance(sym):
     ticker = yf.Ticker(sym, session=_YF_SESSION)
     hist = ticker.history(period="5d")
     if len(hist) < 2:
         raise ValueError("yfinance 데이터 부족")
-    prev = float(hist["Close"].iloc[-2])
-    curr = float(hist["Close"].iloc[-1])
-    return prev, curr
-
+    return float(hist["Close"].iloc[-2]), float(hist["Close"].iloc[-1])
 
 def get_prices():
     data = []
     for sym, name in PORTFOLIO.items():
         result = None
-
         for attempt in range(2):
             try:
                 prev, curr = _fetch_naver(sym)
-                result = _make_result(sym, name, prev, curr)
-                break
+                result = _make_result(sym, name, prev, curr); break
             except Exception as e:
                 print(f"[Naver금융 오류] {sym} (시도 {attempt+1}/2): {e}")
-                if attempt == 0:
-                    time.sleep(2)
-
+                if attempt == 0: time.sleep(2)
         if result is None:
             for attempt in range(2):
                 try:
                     prev, curr = _fetch_stooq(sym)
-                    result = _make_result(sym, name, prev, curr)
-                    break
+                    result = _make_result(sym, name, prev, curr); break
                 except Exception as e:
                     print(f"[Stooq 오류] {sym} (시도 {attempt+1}/2): {e}")
-                    if attempt == 0:
-                        time.sleep(2)
-
+                    if attempt == 0: time.sleep(2)
         if result is None:
             for attempt in range(2):
                 try:
                     prev, curr = _fetch_yahoo_chart(sym)
-                    result = _make_result(sym, name, prev, curr)
-                    break
+                    result = _make_result(sym, name, prev, curr); break
                 except Exception as e:
                     print(f"[YahooChart 오류] {sym} (시도 {attempt+1}/2): {e}")
-                    if attempt == 0:
-                        time.sleep(3)
-
+                    if attempt == 0: time.sleep(3)
         if result is None:
             for attempt in range(2):
                 try:
                     prev, curr = _fetch_yfinance(sym)
-                    result = _make_result(sym, name, prev, curr)
-                    break
+                    result = _make_result(sym, name, prev, curr); break
                 except Exception as e:
                     print(f"[yfinance 오류] {sym} (시도 {attempt+1}/2): {e}")
-                    if attempt == 0:
-                        time.sleep(5)
-
+                    if attempt == 0: time.sleep(5)
         if result is None:
             result = dict(symbol=sym, name=name, price="N/A", prev="N/A",
-                           chg=0, arrow="", sign="", color_hex="#888",
-                           emoji="⚪")
+                          chg=0, arrow="", sign="", color_hex="#888", emoji="⚪")
         data.append(result)
         time.sleep(1)
     return data
@@ -192,48 +150,55 @@ def get_prices():
 
 # ── 2. Google News RSS ────────────────────────────────────────
 def google_news(query: str, n_today=5, n_week=10, keywords=None):
-    """오늘 뉴스 n_today개 + 최근 7일 뉴스 n_week개 반환 (키워드 필터 적용)"""  # ← 변경
+    """
+    오늘/최근7일 뉴스를 dict로 분리 반환:
+      {"today": [...], "week": [...]}
+    슬라이싱 없이 각 버킷에 직접 분류 → 오늘 기사가 0개여도 week가 오늘 자리를 차지하지 않음
+    """
     enc = urllib.parse.quote(query)
     url = (f"https://news.google.com/rss/search"
            f"?q={enc}&hl=ko&gl=KR&ceid=KR:ko")
     today_date    = NOW.date()
-    week_ago_date = (NOW - timedelta(days=7)).date()  # ← 변경: 7일 전
+    week_ago_date = (NOW - timedelta(days=7)).date()
 
     def is_relevant(title):
-        if not keywords:
-            return True
-        title_lower = title.lower()
-        return any(kw.lower() in title_lower for kw in keywords)
+        if not keywords: return True
+        return any(kw.lower() in title.lower() for kw in keywords)
 
-    today_items, week_items = [], []  # ← 변경: yesterday_items → week_items
+    today_items, week_items = [], []
     try:
         feed = feedparser.parse(url)
         for e in feed.entries:
             if not is_relevant(e.title):
                 continue
-            pub = datetime(*e.published_parsed[:6], tzinfo=timezone.utc).astimezone(KST)
+            try:
+                pub = datetime(*e.published_parsed[:6], tzinfo=timezone.utc).astimezone(KST)
+            except Exception:
+                continue
             item = {"title": e.title, "link": e.link,
                     "pub": pub.strftime("%m/%d %H:%M")}
-            if pub.date() == today_date and len(today_items) < n_today:
+            pub_date = pub.date()
+            if pub_date == today_date and len(today_items) < n_today:
                 today_items.append(item)
-            elif week_ago_date <= pub.date() < today_date and len(week_items) < n_week:  # ← 변경
+            elif week_ago_date <= pub_date < today_date and len(week_items) < n_week:
                 week_items.append(item)
-
             if len(today_items) >= n_today and len(week_items) >= n_week:
                 break
-        return today_items + week_items
     except Exception as ex:
         print(f"[Google RSS 오류] {query}: {ex}")
-        return today_items + week_items
+    return {"today": today_items, "week": week_items}   # ← dict로 반환
 
 
 # ── 3. Naver News API ─────────────────────────────────────────
 def naver_news(query: str, n_today=5, n_week=10, keywords=None):
-    """오늘 뉴스 n_today개 + 최근 7일 뉴스 n_week개 반환 (키워드 필터 적용)"""  # ← 변경
+    """
+    오늘/최근7일 뉴스를 dict로 분리 반환:
+      {"today": [...], "week": [...]}
+    """
     if not NAVER_ID or not NAVER_SECRET:
-        return []
+        return {"today": [], "week": []}
     enc = urllib.parse.quote(query)
-    display = max(n_today, n_week) * 6  # ← 변경: 더 많이 받아야 하므로 n_week 기준
+    display = max(n_today, n_week) * 6
     url = (f"https://openapi.naver.com/v1/search/news.json"
            f"?query={enc}&display={display}&sort=date")
     req = urllib.request.Request(url)
@@ -241,41 +206,40 @@ def naver_news(query: str, n_today=5, n_week=10, keywords=None):
     req.add_header("X-Naver-Client-Secret", NAVER_SECRET)
 
     today_date    = NOW.date()
-    week_ago_date = (NOW - timedelta(days=7)).date()  # ← 변경
-    today_items, week_items = [], []  # ← 변경
+    week_ago_date = (NOW - timedelta(days=7)).date()
+    today_items, week_items = [], []
 
     try:
         with urllib.request.urlopen(req) as r:
             raw = json.loads(r.read().decode())
 
         def is_relevant(title):
-            if not keywords:
-                return True
-            title_lower = title.lower()
-            return any(kw.lower() in title_lower for kw in keywords)
+            if not keywords: return True
+            return any(kw.lower() in title.lower() for kw in keywords)
 
         for it in raw.get("items", []):
             try:
-                pub_dt = datetime.strptime(it.get("pubDate",""), "%a, %d %b %Y %H:%M:%S %z").astimezone(KST)
+                pub_dt = datetime.strptime(
+                    it.get("pubDate",""), "%a, %d %b %Y %H:%M:%S %z"
+                ).astimezone(KST)
             except Exception:
                 continue
             raw_title = it["title"].replace("<b>","").replace("</b>","")
             if not is_relevant(raw_title):
                 continue
             item = {"title": raw_title,
-                    "link":  it.get("originallink") or it["link"],
-                    "pub":   pub_dt.strftime("%m/%d %H:%M")}
-            if pub_dt.date() == today_date and len(today_items) < n_today:
+                    "link": it.get("originallink") or it["link"],
+                    "pub":  pub_dt.strftime("%m/%d %H:%M")}
+            pub_date = pub_dt.date()
+            if pub_date == today_date and len(today_items) < n_today:
                 today_items.append(item)
-            elif week_ago_date <= pub_dt.date() < today_date and len(week_items) < n_week:  # ← 변경
+            elif week_ago_date <= pub_date < today_date and len(week_items) < n_week:
                 week_items.append(item)
-
             if len(today_items) >= n_today and len(week_items) >= n_week:
                 break
-        return today_items + week_items
     except Exception as ex:
         print(f"[Naver 오류] {query}: {ex}")
-        return today_items + week_items
+    return {"today": today_items, "week": week_items}   # ← dict로 반환
 
 
 # ── 4. 뉴스 수집 ─────────────────────────────────────────────
@@ -303,8 +267,8 @@ NEWS_QUERIES = {
 def collect_news():
     g, n = {}, {}
     for sym, (q_google, q_naver, g_keywords, n_keywords) in NEWS_QUERIES.items():
-        g[sym] = google_news(q_google, keywords=g_keywords)
-        n[sym] = naver_news(q_naver, keywords=n_keywords)
+        g[sym] = google_news(q_google, keywords=g_keywords)   # {"today":[], "week":[]}
+        n[sym] = naver_news(q_naver, keywords=n_keywords)     # {"today":[], "week":[]}
     return g, n
 
 
@@ -333,33 +297,27 @@ def build_html(prices, g_news, n_news):
         ) or "<li style='color:#aaa'>뉴스 없음</li>"
 
     for s in prices:
-        sym  = s['symbol']
-        col  = accent.get(sym, "#555")
-        gn   = g_news.get(sym, [])
-        nn   = n_news.get(sym, [])
-
-        # [오늘 5개] + [최근 7일 10개] 순서  ← 변경
-        g_today, g_week = gn[:5], gn[5:]
-        n_today, n_week = nn[:5], nn[5:]
-
-        g_today_li = render_news_list(g_today)
-        g_week_li  = render_news_list(g_week)   # ← 변경
-        n_today_li = render_news_list(n_today)
-        n_week_li  = render_news_list(n_week)   # ← 변경
+        sym = s['symbol']
+        col = accent.get(sym, "#555")
+        # ← dict에서 직접 꺼냄 (슬라이싱 없음)
+        g_today = g_news.get(sym, {}).get("today", [])
+        g_week  = g_news.get(sym, {}).get("week",  [])
+        n_today = n_news.get(sym, {}).get("today", [])
+        n_week  = n_news.get(sym, {}).get("week",  [])
 
         news_blocks += f"""
         <div style="margin-bottom:14px;padding:14px;background:#fff;border-left:4px solid {col};border-radius:4px">
           <p style="margin:0 0 8px;font-weight:600;font-size:14px">{s['emoji']} {s['name']} ({sym})</p>
 
           <p style="margin:0 0 4px;font-size:12px;color:#777;font-weight:600">해외 뉴스 (Google News) — 오늘</p>
-          <ul style="margin:0 0 8px;padding-left:18px;font-size:13px;line-height:1.6">{g_today_li}</ul>
+          <ul style="margin:0 0 8px;padding-left:18px;font-size:13px;line-height:1.6">{render_news_list(g_today)}</ul>
           <p style="margin:0 0 4px;font-size:12px;color:#777;font-weight:600">해외 뉴스 (Google News) — 최근 7일</p>
-          <ul style="margin:0 0 10px;padding-left:18px;font-size:13px;line-height:1.6">{g_week_li}</ul>
+          <ul style="margin:0 0 10px;padding-left:18px;font-size:13px;line-height:1.6">{render_news_list(g_week)}</ul>
 
           <p style="margin:0 0 4px;font-size:12px;color:#777;font-weight:600">국내 뉴스 (Naver) — 오늘</p>
-          <ul style="margin:0 0 8px;padding-left:18px;font-size:13px;line-height:1.6">{n_today_li}</ul>
+          <ul style="margin:0 0 8px;padding-left:18px;font-size:13px;line-height:1.6">{render_news_list(n_today)}</ul>
           <p style="margin:0 0 4px;font-size:12px;color:#777;font-weight:600">국내 뉴스 (Naver) — 최근 7일</p>
-          <ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.6">{n_week_li}</ul>
+          <ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.6">{render_news_list(n_week)}</ul>
         </div>"""
 
     best  = max(prices, key=lambda x: x['chg'])
@@ -462,24 +420,23 @@ def save_markdown(prices, g_news, n_news):
     lines.append("\n---\n\n## 📰 종목별 뉴스\n")
     for s in prices:
         sym = s['symbol']
-        gn  = g_news.get(sym, [])
-        nn  = n_news.get(sym, [])
-        g_today, g_week = gn[:5], gn[5:]   # ← 변경
-        n_today, n_week = nn[:5], nn[5:]   # ← 변경
+        # ← dict에서 직접 꺼냄 (슬라이싱 없음)
+        g_today = g_news.get(sym, {}).get("today", [])
+        g_week  = g_news.get(sym, {}).get("week",  [])
+        n_today = n_news.get(sym, {}).get("today", [])
+        n_week  = n_news.get(sym, {}).get("week",  [])
 
         lines.append(f"### {s['emoji']} {s['name']} ({sym})\n")
-
         lines.append("**해외 뉴스 (Google) — 오늘**")
         for item in g_today:
             lines.append(f"- [{item['title']}]({item['link']}) _{item['pub']}_")
-        lines.append("\n**해외 뉴스 (Google) — 최근 7일**")  # ← 변경
+        lines.append("\n**해외 뉴스 (Google) — 최근 7일**")
         for item in g_week:
             lines.append(f"- [{item['title']}]({item['link']}) _{item['pub']}_")
-
         lines.append("\n**국내 뉴스 (Naver) — 오늘**")
         for item in n_today:
             lines.append(f"- [{item['title']}]({item['link']}) _{item['pub']}_")
-        lines.append("\n**국내 뉴스 (Naver) — 최근 7일**")  # ← 변경
+        lines.append("\n**국내 뉴스 (Naver) — 최근 7일**")
         for item in n_week:
             lines.append(f"- [{item['title']}]({item['link']}) _{item['pub']}_")
         lines.append("")
@@ -497,25 +454,20 @@ def send_email(prices, g_news, n_news):
     subject = (f"📈 [주식브리핑] {NOW.strftime('%Y-%m-%d')} | "
                f"{worst['name']} {worst['arrow']}{worst['chg']}% · "
                f"{best['name']} {best['arrow']}{best['sign']}{best['chg']}%")
-
     plain = (f"[주식브리핑 {NOW.strftime('%m/%d')}]\n"
              + "  ".join(f"{s['name']} {s['arrow']}{s['sign']}{s['chg']}%" for s in prices)
              + "\n⚠️ 투자 참고용")
-
     html = build_html(prices, g_news, n_news)
-
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"]    = SENDER_EMAIL
     msg["To"]      = RECIPIENT_EMAIL
     msg.attach(MIMEText(plain, "plain", "utf-8"))
     msg.attach(MIMEText(html,  "html",  "utf-8"))
-
     recipients = [r.strip() for r in RECIPIENT_EMAIL.split(",")]
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
         s.login(SENDER_EMAIL, SENDER_PASSWORD)
         s.sendmail(SENDER_EMAIL, recipients, msg.as_string())
-
     print(f"[발송 완료] {subject}")
 
 
