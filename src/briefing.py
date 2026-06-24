@@ -313,7 +313,7 @@ def build_html(prices, g_news, n_news):
     for s in prices:
         price_rows += f"""
         <tr style="border-bottom:1px solid #f0f0f0">
-          <td style="padding:10px 14px">{s['name']} <span style="color:#999;font-size:12px">({s['symbol']})</span></td>
+          <td style="padding:10px 14px"><a href="https://m.stock.naver.com/worldstock/stock/{s['symbol']}/total" style="color:#1a237e;text-decoration:none;font-weight:500">{s['name']}</a> <span style="color:#999;font-size:12px">({s['symbol']})</span></td>
           <td style="padding:10px 14px;text-align:center;font-weight:600">${s['price']}</td>
           <td style="padding:10px 14px;text-align:center;color:#888;font-size:13px">${s['prev']}</td>
           <td style="padding:10px 14px;text-align:center;color:{s['color_hex']};font-weight:700">{s['arrow']} {s['sign']}{s['chg']}%</td>
